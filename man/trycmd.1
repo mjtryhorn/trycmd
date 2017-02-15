@@ -1,0 +1,74 @@
+.\" 
+.\" trycmd.1
+.\"
+.\" This file is part of try.  (c) 2017 M. J. Tryhorn.
+.\"
+.\" Built by following examples and instructions at: http://liw.fi/manpages/
+.\"
+.ds Nm Try
+.ds nm try
+.ds Vn 1.0
+.TH \*(nm 6
+.SH NAME
+\*(nm \- a colorful message to inform you whether a command succeeded or
+failed
+.SH SYNOPSIS
+.B \*(nm
+.RB [ \-i | \-\-interactive ]
+.RB [ \-v | \-\-verbose ]
+.RB [ \-h | \-\-help ]
+.RB [ \-\- ]
+.I command_name
+.RI [ argument
+.IR ... ]
+.SH DESCRIPTION
+.B \*(Nm
+runs a given command then, on the completion of said command, prints
+a colorful message stating whether the command succeeded or failed.
+This may be useful when running commands that report their success or failure
+through status codes, where their on-screen notification (if any) is too
+subtle.
+.B \*(Nm
+is not subtle.
+.PP
+.B \*(Nm
+relies upon the wrapped command returning zero for success and non-zero
+for failure.
+If failure is reported in another way, \fB\*(Nm\fR may mistake the command
+as having been successful.
+On the completion of the wrapped command \fB\*(Nm\fR's result message is
+written to standard output.
+.SH OPTIONS
+.TP
+.BR \-i ", " \-\-interactive
+Force the subshell to behave as-if it was an interactive session.
+This option may be necessary if your command is, or relies upon, aliases.
+.TP
+.BR \-v ", " \-\-verbose
+Enable verbose output.
+.TP
+.BR \-h ", " \-\-help
+Display a usage message on standard output and exit successfully.
+.TP
+.BR \-\-
+End of options.
+.SH ENVIRONMENT
+.TP
+.BR TRY_INTERACTIVE =\fI1\fR
+Set to 1 to always run commands in an interactive sub-shell.
+.SH EXAMPLES
+.TP
+.B \*(nm true
+Always succeeds.
+.TP
+.B \*(nm false
+Always fails.
+.TP
+.B \*(nm wget www.ietf.org/rfc/rfc2324.txt
+Attempts to download RFC 2324 - Hyper Text Coffee Pot Control Protocol.
+.SH BUGS
+If there are any, please notify the author at the address below.
+.SH AUTHOR
+M. J. Tryhorn (bugs@example.com).
+.SH SEE ALSO
+.BR trycmd (1)
