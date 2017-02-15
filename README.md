@@ -7,12 +7,19 @@ failed. This may be useful when running commands that report their success
 or failure through status codes, where their on-screen notification (if any)
 is too subtle. Try is not subtle.
 
+To create automake build files:
+1. $ aclocal
+2. $ autoconf
+3. $ autoheader
+4. $ automake --add-missing
+Now you should have a configure and all required makefiles.
+
 To build and install:
-$ ./configure
-$ make
-$ sudo make install
+1. $ ./configure
+2. $ make
+3. $ sudo make install
 
 To use:
-$ try true   # success.
-$ try false  # failure.
-$ try wget www.ietf.org/rfc/rfc2324.txt  # a real command.
+- $ try true   # success.
+- $ try false  # failure.
+- $ try wget www.ietf.org/rfc/rfc2324.txt  # a real command.

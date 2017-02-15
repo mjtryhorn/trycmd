@@ -8,12 +8,6 @@ AC_CONFIG_SRCDIR([src/trycmd.c])
 AC_CONFIG_HEADERS([src/trycmd_config.h])
 AC_CONFIG_FILES([Makefile src/Makefile man/Makefile])
 
-# Custom configuration.
-AC_DEFINE([TRY_EYE_ARG_SUCCESS], ["-e^^"],
-    [Eye string argument to use on command success.])
-AC_DEFINE([TRY_EYE_ARG_FAILURE], ["-d"],
-    [Eye string argument to use on command failure.])
-
 # Checks for programs.
 AC_PROG_CC
 AC_PROG_RANLIB
