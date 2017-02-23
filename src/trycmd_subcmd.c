@@ -1,18 +1,17 @@
-/*
- * trycmd_subcmd.c -- Spawn subcommands and clearly show results.
+/**
+ * \file      trycmd_subcmd.c
+ * \brief     Spawn subcommands and clearly show results.
  *
- * Author:  M. J. Tryhorn
- * Date:    2017-Feb-02
- * Version: 1.0
- *
- * Copyright 2017.
- * All rights reserved.
+ * \author    M. J. Tryhorn
+ * \date      2017-Feb-23
+ * \version   1.0
+ * \copyright MIT License (see LICENSE).
  */
 
 #include "trycmd_config.h"
 #include "trycmd.h"
 #include <assert.h>        /* assert. */
-#include <ctype.h>         /* isspace. */
+#include <ctype.h>         /* isalnum. */
 #include <stddef.h>        /* size_t. */
 #include <stdio.h>         /* snprintf, fprintf, fputc, fputs, stderr. */
 #include <stdlib.h>        /* EXIT_SUCCESS, EXIT_FAILURE, abort. */
@@ -150,6 +149,9 @@ int trycmd_run_subcommand(const struct trycmd_opts* const opts) {
     const size_t req_buflen = trycmd_make_shell_cmd(opts, NULL, 0, NULL);
     int result = 255;
 
+    /* Check arguments. */
+    assert("Unexpected NULL opts" && (opts != NULL));
+
     if (req_buflen > 0) {
         pid_t child_pid;
         pid_t wait_result;
@@ -166,8 +168,8 @@ int trycmd_run_subcommand(const struct trycmd_opts* const opts) {
 
         /* Print the subcommand if requested. */
         if (opts->opt_verbose || trycmd_debug_enabled) {
-            trycmd_print_argv("try:", argv);
-            fputc('\n', stdout);
+            trycmd_print_argv("try:", argv, stderr);
+            fputc('\n', stderr);
         }
 
         /* Spawn the subprocess then wait for it to finish. */
@@ -212,29 +214,47 @@ int trycmd_run_subcommand(const struct trycmd_opts* const opts) {
 }
 
 int trycmd_show_exit_status(const struct trycmd_opts* const opts,
-                            const int exit_status) {
+                            const int exit_status,
+                            FILE* os) {
     /* Make a dividing line to separate the result from child messages. */
     const char* const divider_line = _("=========================="
                                        "=========================="
-                                       "==========================\n");
+                                       "==========================");
+    /* Check arguments. */
+    assert("Unexpected NULL opts" && (opts != NULL));
+    assert("Unexpected NULL os" && (os != NULL));
+
     /* Print a prologue. */
     if (exit_status == EXIT_SUCCESS) {
-        fprintf(stderr, _("\033[1;32m%sSuccess:\033[0m"), divider_line);
+        fprintf(os, _("\033[1;32m%s\nSuccess:\033[0m"), divider_line);
     } else {
-        fprintf(stderr, _("\033[1;31m%sFailed (status=%d):\033[0m"),
+        fprintf(os, _("\033[1;31m%s\nFailed (status=%d):\033[0m"),
                 divider_line, exit_status);
     }
 
     /* Print the command itself. */
-    trycmd_print_argv(N_(""), opts->opt_sub_argv);
+    trycmd_print_argv(N_(""), opts->opt_sub_argv, os);
 
     /* Print an epilogue. */
     if (exit_status == EXIT_SUCCESS) {
-        fprintf(stderr, _("\n\033[1;32m%s\033[0m"), divider_line);
+        fprintf(os, _("\n\033[1;32m%s\033[0m\n"), divider_line);
     } else {
-        fprintf(stderr, _("\n\033[1;31m%s\033[0m"), divider_line);
+        fprintf(os, _("\n\033[1;31m%s\033[0m\n"), divider_line);
     }
     return exit_status;
+}
+
+int trycmd_needs_quoting(const char c) {
+    switch (c) {
+        case '_':
+        case '-':
+        case '/':
+            // Special, allowed chars.
+            return 0;
+        default:
+            // Only needs quoting if outside range [0-9a-zA-Z].
+            return !isalnum(c);
+    }
 }
 
 void trycmd_pretty_print_arg(const char* const arg, FILE* const os) {
@@ -250,15 +270,12 @@ void trycmd_pretty_print_arg(const char* const arg, FILE* const os) {
      * Search for any non-alphanumeric characters
      * that would necessitate quoting.
      */
-    for (apos = arg; *apos; ++apos) {
-        if (!isalnum(*apos)) {
-            needs_quoting = 1;
-            break;
-        }
+    for (apos = arg; *apos && needs_quoting == 0; ++apos) {
+        needs_quoting = trycmd_needs_quoting(*apos);
     }
 
     if (!needs_quoting) {
-        /* This argument is fully alpha-numeric and requires no quoting. */
+        /* This argument requires no quoting. */
         fputs(arg, os);
     } else {
         /*
@@ -291,18 +308,19 @@ void trycmd_pretty_print_arg(const char* const arg, FILE* const os) {
     }
 }
 
-void trycmd_print_argv(const char* const prefix, char* argv[]) {
+void trycmd_print_argv(const char* const prefix, char* argv[], FILE* const os) {
     /* Check arguments. */
     assert("Unexpected NULL prefix" && (prefix != NULL));
     assert("Unexpected NULL argv" && (argv != NULL));
+    assert("Unexpected NULL os" && (os != NULL));
 
     /* Print the prefix. */
-    fputs(prefix, stdout);
+    fputs(prefix, os);
 
     /* Print any arguments. */
     for (; *argv != NULL; ++argv) {
-        fputc(' ', stderr);
-        trycmd_pretty_print_arg(*argv, stderr);
+        fputc(' ', os);
+        trycmd_pretty_print_arg(*argv, os);
     }
 }
 

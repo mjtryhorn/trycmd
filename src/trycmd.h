@@ -1,25 +1,19 @@
 #ifndef TRYCMD_H_
 #define TRYCMD_H_
 
-/*
- * trycmd.h -- Run a command, display a standard result
- *             and pass on any exit status.
+/**
+ * \file      trycmd.h
+ * \brief     Common header for the Try project.
+ * \details   All public symbols are declared herein.
  *
- * Author:  M. J. Tryhorn
- * Date:    2017-Feb-02
- * Version: 1.0
- *
- * Copyright 2017.
- * All rights reserved.
+ * \author    M. J. Tryhorn
+ * \date      2017-Feb-23
+ * \version   1.0
+ * \copyright MIT License (see LICENSE).
  */
 
 #include <stddef.h>  /* size_t. */
 #include <stdio.h>   /* FILE. */
-
-/** \file trycmd.h
-    \brief Common header for the Try project.
-    All public symbols are declared herein.
-*/
 
 /** Constant added to the exit status if a subcommand fails with a signal.
  *  We return 128+n where n is the signal value, to match the behaviour of
@@ -135,9 +129,18 @@ extern int      trycmd_run_subcommand(const struct trycmd_opts* opts);
  *  A non-zero exit_status will be interpretted as failure.
  *  @param  opts Options describing the subcommand.
  *  @param  exit_status The exit status to illustrate.
+ *  @param  os   The destination stream (stdout, stderr).
  */
 extern int      trycmd_show_exit_status(const struct trycmd_opts* opts,
-                                        int exit_status);
+                                        int exit_status,
+                                        FILE* os);
+
+/** Check whether the given character would require 'quoting' if passed to
+ *  a typical shell.
+ *  @param  c The ASCII character to check.
+ *  @return Non-zero if the character requires quoting, 0 otherwise.
+ */
+extern int      trycmd_needs_quoting(char c);
 
 /** Print a given command-line argument with quoting as necessary.
  *  @param  arg The argument to be printed as null-terminated string.
@@ -145,11 +148,12 @@ extern int      trycmd_show_exit_status(const struct trycmd_opts* opts,
  */
 extern void     trycmd_pretty_print_arg(const char* arg, FILE* os);
 
-/** Print a given argument list to standard output.
- *  @param prefix A printed label for the argument list, preceding it.
- *  @param argv   The argument list to be printed, terminated by NULL.
+/** Print a given argument list with quoting as necessary.
+ *  @param  prefix A printed label for the argument list, preceding it.
+ *  @param  argv   The argument list to be printed, terminated by NULL.
+ *  @param  os     The destination stream (stdout, stderr).
  */
-extern void     trycmd_print_argv(const char* prefix, char* argv[]);
+extern void     trycmd_print_argv(const char* prefix, char* argv[], FILE* os);
 
 /** Print this application's usage information to the given stream.
  *  This is given in the form of a human-readable message.

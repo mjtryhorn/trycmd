@@ -1,1 +1,1 @@
-man_MANS = trycmd.1
+man_MANS = try.1

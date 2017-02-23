@@ -1,13 +1,13 @@
-/*
- * trycmd.c -- Run a command, display a standard result
- *             and pass on any exit status.
+/**
+ * \file      trycmd.c
+ * \brief     Run a command, display a standard result
+ *            and pass on any exit status.
+ * \details   Defines the application's main entry point.
  *
- * Author:  M. J. Tryhorn
- * Date:    2017-Feb-02
- * Version: 1.0
- *
- * Copyright 2017.
- * All rights reserved.
+ * \author    M. J. Tryhorn
+ * \date      2017-Feb-23
+ * \version   1.0
+ * \copyright MIT License (see LICENSE).
  */
 
 #include "trycmd_config.h"

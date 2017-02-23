@@ -10,9 +10,10 @@ codes, where their on-screen notification (if any) is too subtle. Try is
 not subtle.
 
 <pre>$ try true
-* * * * * * * *
-true - Success!
-* * * * * * * *</pre>
+==============================================================================
+Success: true
+==============================================================================
+</pre>
 
 Try relies upon the wrapped command returning zero for success and non-zero
 for failure. If failure is reported in another way, Try may mistake the

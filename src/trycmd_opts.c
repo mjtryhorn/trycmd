@@ -1,12 +1,11 @@
-/*
- * trycmd_opts.c -- Options parsing.
+/**
+ * \file      trycmd_opts.c
+ * \brief     Command-line options parsing.
  *
- * Author:  M. J. Tryhorn
- * Date:    2017-Feb-02
- * Version: 1.0
- *
- * Copyright 2017.
- * All rights reserved.
+ * \author    M. J. Tryhorn
+ * \date      2017-Feb-23
+ * \version   1.0
+ * \copyright MIT License (see LICENSE).
  */
 
 #include "trycmd_config.h"

@@ -1,12 +1,11 @@
-/*
- * trycmd_test.c -- Comprehensive automated test suite for trycmd.
+/**
+ * \file      trycmd_test.c
+ * \brief     Comprehensive automated test suite for trycmd.
  *
- * Author:  M. J. Tryhorn
- * Date:    2017-Feb-02
- * Version: 1.0
- *
- * Copyright 2017.
- * All rights reserved.
+ * \author    M. J. Tryhorn
+ * \date      2017-Feb-23
+ * \version   1.0
+ * \copyright MIT License (see LICENSE).
  */
 
 #include "trycmd_config.h"
@@ -17,6 +16,7 @@
 #include <stdlib.h>  /* abort, setenv, unsetenv, EXIT_FAILURE, EXIT_SUCCESS. */
 #include <stdio.h>   /* fmemopen, fprintf, printf, puts. */
 #include <string.h>  /* strcmp. */
+#include <unistd.h>  /* close, dup, dup2, fsync, read. */
 
 /* Standard testing apparatus. */
 #define ARGV_LEN(X) (sizeof(X) / sizeof((X)[0]) - 1)
@@ -25,10 +25,9 @@
     const int x_result = (int)(X);                                        \
     const int y_result = (int)(Y);                                        \
     if (x_result != y_result) {                                           \
-        fprintf(stderr,                                                   \
-                "Expected %s == %s at line %d (%d != %d)\n",              \
-                "" #X "", "" #Y "", __LINE__,                             \
-                x_result, y_result);                                      \
+        printf("Expected %s == %s at line %d (%d != %d)\n",               \
+               "" #X "", "" #Y "", __LINE__,                              \
+               x_result, y_result);                                       \
         return 1;                                                         \
     }                                                                     \
 } while (0)
@@ -37,10 +36,9 @@
     void* const x_result = (X);                                           \
     void* const y_result = (Y);                                           \
     if (x_result != y_result) {                                           \
-        fprintf(stderr,                                                   \
-                "Expected %s == %s at line %d (%p != %p)\n",              \
-                "" #X "", "" #Y "", __LINE__,                             \
-                x_result, y_result);                                      \
+        printf("Expected %s == %s at line %d (%p != %p)\n",               \
+               "" #X "", "" #Y "", __LINE__,                              \
+               x_result, y_result);                                       \
         return 1;                                                         \
     }                                                                     \
 } while (0)
@@ -51,10 +49,9 @@
     if (x_result != y_result) {                                           \
         if (x_result == NULL || y_result == NULL ||                       \
             strcmp(x_result, y_result) != 0) {                            \
-            fprintf(stderr,                                               \
-                    "Expected %s == %s at line %d (\"%s\" != \"%s\")\n",  \
-                    "" #X "", "" #Y "", __LINE__,                         \
-                    x_result, y_result);                                  \
+            printf("Expected %s == %s at line %d (\"%s\" != \"%s\")\n",   \
+                   "" #X "", "" #Y "", __LINE__,                          \
+                   x_result, y_result);                                   \
             return 1;                                                     \
         }                                                                 \
     }                                                                     \
@@ -64,6 +61,9 @@
 static int      test_trycmd_make_shell_cmd(void);
 static int      test_trycmd_run_subcommand(void);
 static int      test_trycmd_show_exit_status(void);
+static int      test_trycmd_needs_quoting(void);
+static int      test_trycmd_pretty_print_arg(void);
+static int      test_trycmd_print_argv(void);
 static int      test_trycmd_print_usage(void);
 static int      test_trycmd_read_options(void);
 static int      test_trycmd_align_sz(void);
@@ -72,8 +72,14 @@ static int      test_trycmd_getenv_s(void);
 static int      test_trycmd_getenv_i(void);
 static int      test_trycmd_main(void);
 
+/** Name and function pointer to a single test case. */
 struct test_func {
+    /** Name of the test case. */
     const char* name;
+
+    /** Test case entry point.
+     *  @return 0 on success, non-zero on failure.
+     */
     int         (*func)(void);
 };
 
@@ -81,6 +87,9 @@ static const struct test_func all_tests[] = {
     { "trycmd_make_shell_cmd",   &test_trycmd_make_shell_cmd   },
     { "trycmd_run_subcommand",   &test_trycmd_run_subcommand   },
     { "trycmd_show_exit_status", &test_trycmd_show_exit_status },
+    { "trycmd_needs_quoting",    &test_trycmd_needs_quoting    },
+    { "trycmd_pretty_print_arg", &test_trycmd_pretty_print_arg },
+    { "trycmd_print_argv",       &test_trycmd_print_argv       },
     { "trycmd_print_usage",      &test_trycmd_print_usage      },
     { "trycmd_read_options",     &test_trycmd_read_options     },
     { "trycmd_align_sz",         &test_trycmd_align_sz         },
@@ -93,6 +102,11 @@ static const size_t all_tests_len = sizeof(all_tests) / sizeof(all_tests[0]);
 
 static char* trycmd_test_progname = NULL;
 
+/* Storage for trycmd_capture_{begin,end}. */
+static int trycmd_saved_stdout = -1;
+static int trycmd_saved_stderr = -1;
+static int trycmd_saved_pipe   = -1;
+
 /* A result outside the normal 0..125 range. */
 static const int trycmd_test_high_exit_status = 129;
 
@@ -101,7 +115,7 @@ static void trycmd_initialise_tests(int argc, char* argv[]) {
     assert(argc > 0);
     assert(argv[0] != NULL);
     assert(argv[0][0] != '\0');
-    
+
     /*
      * Read and store the program name.
      * This can be used to respawn the program for tests.
@@ -117,6 +131,46 @@ static void trycmd_initialise_tests(int argc, char* argv[]) {
     /* Prevent all string translation. */
     unsetenv("LANG");
     unsetenv("LANGUAGE");
+}
+
+static void trycmd_capture_begin(void) {
+    int out_pipe[2] = { -1, -1 };
+
+    /*
+     * Create and install a pipe as a new
+     * destination for both stdout and stderr.
+     */
+    if (pipe(out_pipe) == 0) {
+        trycmd_saved_stdout = dup(STDOUT_FILENO);
+        trycmd_saved_stderr = dup(STDERR_FILENO);
+        trycmd_saved_pipe = out_pipe[0];
+        dup2(out_pipe[1], STDOUT_FILENO);
+        dup2(out_pipe[1], STDERR_FILENO);
+        close(out_pipe[1]);
+    }
+}
+
+static void trycmd_capture_end(char* buffer, size_t sz) {
+    ssize_t readlen;
+
+    /* If a pipe has been opened... */
+    if (trycmd_saved_pipe != -1) {
+        /* Sync both streams. */
+        fsync(STDOUT_FILENO);
+        fsync(STDERR_FILENO);
+        
+        /* Empty the pipe into the given buffer. */
+        readlen = read(trycmd_saved_pipe, buffer, sz - 1);
+        if (readlen >= 0 && (size_t)readlen < sz) {
+            buffer[readlen] = '\0';
+        }
+
+        /* Restore stdout/stderr and close the pipe. */
+        dup2(trycmd_saved_stdout, STDOUT_FILENO);
+        dup2(trycmd_saved_stderr, STDERR_FILENO);
+        close(trycmd_saved_pipe);
+        trycmd_saved_pipe = -1;
+    }
 }
 
 static int trycmd_run_all_tests(void) {
@@ -232,14 +286,146 @@ int test_trycmd_run_subcommand(void) {
 }
 
 int test_trycmd_show_exit_status(void) {
-    char* argv_empty[] = { NULL };
+    char buffer[968] = { 0 };
+    char* argv_true[] = { "true", NULL };
     struct trycmd_opts opts = { 0 };
-    opts.opt_sub_argv = argv_empty;
+    opts.opt_sub_argv = argv_true;
+    FILE* fout;
+    long fpos;
 
-    TEST_EQUAL_I(trycmd_show_exit_status(&opts, 0), 0);
-    TEST_EQUAL_I(trycmd_show_exit_status(&opts, 1), 1);
-    TEST_EQUAL_I(trycmd_show_exit_status(&opts, 2), 2);
-    TEST_EQUAL_I(trycmd_show_exit_status(&opts, 255), 255);
+    /* Write arguments to a memory stream then check its content. */
+    fout = fmemopen(buffer, sizeof(buffer), "w");
+
+    fpos = ftell(fout);
+    TEST_EQUAL_I(trycmd_show_exit_status(&opts, 0, fout), 0);
+    fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos],
+        "\033[1;32m==============================================================================\n"
+        "Success:\033[0m true\n"
+        "\033[1;32m==============================================================================\033[0m\n");
+
+    fpos = ftell(fout);
+    TEST_EQUAL_I(trycmd_show_exit_status(&opts, 1, fout), 1);
+    fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos],
+        "\033[1;31m==============================================================================\n"
+        "Failed (status=1):\033[0m true\n"
+        "\033[1;31m==============================================================================\033[0m\n");
+
+    fpos = ftell(fout);
+    TEST_EQUAL_I(trycmd_show_exit_status(&opts, 2, fout), 2);
+    fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos],
+        "\033[1;31m==============================================================================\n"
+        "Failed (status=2):\033[0m true\n"
+        "\033[1;31m==============================================================================\033[0m\n");
+
+    fpos = ftell(fout);
+    TEST_EQUAL_I(trycmd_show_exit_status(&opts, 255, fout), 255);
+    fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos],
+        "\033[1;31m==============================================================================\n"
+        "Failed (status=255):\033[0m true\n"
+        "\033[1;31m==============================================================================\033[0m\n");
+
+    /* Clean up (skipped on test failure). */
+    fclose(fout);
+    return 0;
+}
+
+int test_trycmd_needs_quoting(void) {
+    TEST_EQUAL_I(trycmd_needs_quoting('0'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('1'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('8'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('9'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('a'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('b'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('y'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('z'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('A'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('B'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('Y'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('Z'), 0);
+
+    TEST_EQUAL_I(trycmd_needs_quoting('\0'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting(' '), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('!'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('"'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('#'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('$'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('%'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('&'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('\''), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('('), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting(')'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('*'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('+'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting(','), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('-'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('.'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('/'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting(':'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting(';'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('<'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('='), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('>'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('?'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('@'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('['), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('\\'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting(']'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('^'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('_'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('`'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('{'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('|'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('}'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('~'), 1);
+    return 0;
+}
+
+int test_trycmd_pretty_print_arg(void) {
+    char buffer[42] = { 0 };
+    FILE* fout;
+    long fpos;
+
+    /* Write arguments to a memory stream then check its content. */
+    fout = fmemopen(buffer, sizeof(buffer), "w");
+    fpos = ftell(fout), trycmd_pretty_print_arg("", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "");
+    fpos = ftell(fout), trycmd_pretty_print_arg("a", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "a");
+    fpos = ftell(fout), trycmd_pretty_print_arg("abc", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "abc");
+    fpos = ftell(fout), trycmd_pretty_print_arg("/a/b/c", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "/a/b/c");
+    fpos = ftell(fout), trycmd_pretty_print_arg("a b c", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "'a b c'");
+    fpos = ftell(fout), trycmd_pretty_print_arg("a\"b\"c", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "'a\"b\"c'");
+    fpos = ftell(fout), trycmd_pretty_print_arg("a'b'c", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "'a'\\''b'\\''c'");
+    fpos = ftell(fout), trycmd_pretty_print_arg("a", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "a");
+    fpos = ftell(fout), trycmd_pretty_print_arg("*", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "'*'");
+
+    /* Clean up (skipped on test failure). */
+    fclose(fout);
+    return 0;
+}
+
+int test_trycmd_print_argv(void) {
+    char* argv[] = { "this", "is a", "test", "*", "/bin/false", NULL };
+    char buffer[42] = { 0 };
+    FILE* fout;
+
+    /* Write arguments to a memory stream then check its content. */
+    fout = fmemopen(buffer, sizeof(buffer), "w");
+    trycmd_print_argv("prefix:", argv, fout);
+    fclose(fout);
+
+    TEST_EQUAL_S(buffer, "prefix: this 'is a' test '*' /bin/false");
     return 0;
 }
 
@@ -250,7 +436,6 @@ int test_trycmd_print_usage(void) {
     /* Write usage information to a memory stream then check its content. */
     fout = fmemopen(buffer, sizeof(buffer), "w");
     trycmd_print_usage(fout);
-    fflush(fout);
     fclose(fout);
 
     TEST_EQUAL_S(buffer,
@@ -541,6 +726,19 @@ int test_trycmd_main(void) {
     char* argv_segflt[]       = { "try", trycmd_test_progname, "S", NULL };
     char* argv_exit_status[]  = { "try", trycmd_test_progname, "X", NULL };
     char* argv_non_existent[] = { "try", "XX_this_should_not_exist_XX", NULL };
+    char buffer[256] = { 0 };
+    int result;
+
+    /* Test with captured stdout, stderr. */
+    trycmd_capture_begin();
+    result = trycmd_main(ARGV_LEN(argv_echo), argv_echo);
+    trycmd_capture_end(buffer, sizeof(buffer));
+    TEST_EQUAL_I(result, EXIT_SUCCESS);
+    TEST_EQUAL_S(buffer,
+        "hello this is a test\n"
+        "\033[1;32m==============================================================================\n"
+        "Success:\033[0m echo hello this is a test\n"
+        "\033[1;32m==============================================================================\033[0m\n");
 
     TEST_EQUAL_I(trycmd_main(ARGV_LEN(argv_echo), argv_echo), EXIT_SUCCESS);
     TEST_EQUAL_I(trycmd_main(ARGV_LEN(argv_true), argv_true), EXIT_SUCCESS);
@@ -596,7 +794,7 @@ int main(int argc, char* argv[]) {
             }
             break;
         default:
-            fprintf(stderr, "try_test: Unrecognised mode '%c'.\n", mode);
+            printf("try_test: Unrecognised mode '%c'.\n", mode);
             result = EXIT_FAILURE;
     }
     return result;

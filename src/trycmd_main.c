@@ -1,12 +1,11 @@
-/*
- * trycmd_main.c -- Entry point for try.
+/**
+ * \file      trycmd_main.c
+ * \brief     Entry point for try.
  *
- * Author:  M. J. Tryhorn
- * Date:    2017-Feb-02
- * Version: 1.0
- *
- * Copyright 2017.
- * All rights reserved.
+ * \author    M. J. Tryhorn
+ * \date      2017-Feb-23
+ * \version   1.0
+ * \copyright MIT License (see LICENSE).
  */
 
 #include "trycmd_config.h"
@@ -40,7 +39,7 @@ int trycmd_main(const int argc, char* argv[]) {
         result = trycmd_run_subcommand(&opts);
 
         /* Show a result message. */
-        result = trycmd_show_exit_status(&opts, result);
+        result = trycmd_show_exit_status(&opts, result, stderr);
 
         /* Pass the child's result out without modification. */
         trycmd_debug("try: exiting with status %d\n", result);

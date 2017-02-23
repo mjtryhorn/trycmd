@@ -10,7 +10,8 @@ AM_LDFLAGS =
 # this lists the binaries to produce, the (non-PHONY, binary) targets in
 # the previous manual Makefile
 noinst_LIBRARIES = libtrycmd.a
-bin_PROGRAMS = try try_test
+noinst_PROGRAMS = try_test
+bin_PROGRAMS = try
 
 libtrycmd_a_SOURCES = trycmd_opts.c \
                       trycmd_debug.c \
