@@ -22,7 +22,7 @@ void trycmd_debug_init(void) {
      * If TRY_DEBUG is present and non-zero, then enable diagnostic message
      * output.
      */
-    trycmd_debug_enabled = !!trycmd_getenv_i(N_("TRY_DEBUG"));
+    trycmd_debug_enabled = !!trycmd_getenv_i(N_("TRY_DEBUG"), 0);
 }
 
 void trycmd_debug(const char* const format, ...) {

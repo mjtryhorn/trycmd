@@ -14,9 +14,10 @@
 #include <limits.h>  /* INT_MAX. */
 #include <signal.h>  /* raise, SIGABRT, SIGSEGV. */
 #include <stdlib.h>  /* abort, setenv, unsetenv, EXIT_FAILURE, EXIT_SUCCESS. */
-#include <stdio.h>   /* fmemopen, fprintf, printf, puts. */
+#include <stdio.h>   /* fmemopen, printf, puts. */
 #include <string.h>  /* strcmp. */
-#include <unistd.h>  /* close, dup, dup2, fsync, read. */
+#include <unistd.h>  /* isatty, close, dup, dup2, fsync, read,
+                        STDOUT_FILENO, STDERR_FILENO. */
 
 /* Standard testing apparatus. */
 #define ARGV_LEN(X) (sizeof(X) / sizeof((X)[0]) - 1)
@@ -61,15 +62,17 @@
 static int      test_trycmd_make_shell_cmd(void);
 static int      test_trycmd_run_subcommand(void);
 static int      test_trycmd_show_exit_status(void);
-static int      test_trycmd_needs_quoting(void);
-static int      test_trycmd_pretty_print_arg(void);
-static int      test_trycmd_print_argv(void);
 static int      test_trycmd_print_usage(void);
 static int      test_trycmd_read_options(void);
+static int      test_trycmd_parse_when(void);
 static int      test_trycmd_align_sz(void);
 static int      test_trycmd_align_ptr(void);
 static int      test_trycmd_getenv_s(void);
 static int      test_trycmd_getenv_i(void);
+static int      test_trycmd_is_color_enabled(void);
+static int      test_trycmd_needs_quoting(void);
+static int      test_trycmd_pretty_print_arg(void);
+static int      test_trycmd_print_argv(void);
 static int      test_trycmd_main(void);
 
 /** Name and function pointer to a single test case. */
@@ -87,15 +90,17 @@ static const struct test_func all_tests[] = {
     { "trycmd_make_shell_cmd",   &test_trycmd_make_shell_cmd   },
     { "trycmd_run_subcommand",   &test_trycmd_run_subcommand   },
     { "trycmd_show_exit_status", &test_trycmd_show_exit_status },
-    { "trycmd_needs_quoting",    &test_trycmd_needs_quoting    },
-    { "trycmd_pretty_print_arg", &test_trycmd_pretty_print_arg },
-    { "trycmd_print_argv",       &test_trycmd_print_argv       },
     { "trycmd_print_usage",      &test_trycmd_print_usage      },
     { "trycmd_read_options",     &test_trycmd_read_options     },
+    { "trycmd_parse_when",       &test_trycmd_parse_when       },
     { "trycmd_align_sz",         &test_trycmd_align_sz         },
     { "trycmd_align_ptr",        &test_trycmd_align_ptr        },
     { "trycmd_getenv_s",         &test_trycmd_getenv_s         },
     { "trycmd_getenv_i",         &test_trycmd_getenv_i         },
+    { "trycmd_is_color_enabled", &test_trycmd_is_color_enabled },
+    { "trycmd_needs_quoting",    &test_trycmd_needs_quoting    },
+    { "trycmd_pretty_print_arg", &test_trycmd_pretty_print_arg },
+    { "trycmd_print_argv",       &test_trycmd_print_argv       },
     { "trycmd_main",             &test_trycmd_main             },
 };
 static const size_t all_tests_len = sizeof(all_tests) / sizeof(all_tests[0]);
@@ -110,7 +115,7 @@ static int trycmd_saved_pipe   = -1;
 /* A result outside the normal 0..125 range. */
 static const int trycmd_test_high_exit_status = 129;
 
-static void trycmd_initialise_tests(int argc, char* argv[]) {
+static void trycmd_initialize_tests(int argc, char* argv[]) {
     /* We expect the command-line to contain the program name. */
     assert(argc > 0);
     assert(argv[0] != NULL);
@@ -124,6 +129,7 @@ static void trycmd_initialise_tests(int argc, char* argv[]) {
 
     /* Reset environment options to an expected, initial state. */
     unsetenv("TRY_INTERACTIVE");
+    unsetenv("TRY_COLOR");
     unsetenv("SHELL");
     unsetenv("TESTKEY_1");
     unsetenv("TESTKEY_2");
@@ -158,7 +164,7 @@ static void trycmd_capture_end(char* buffer, size_t sz) {
         /* Sync both streams. */
         fsync(STDOUT_FILENO);
         fsync(STDERR_FILENO);
-        
+
         /* Empty the pipe into the given buffer. */
         readlen = read(trycmd_saved_pipe, buffer, sz - 1);
         if (readlen >= 0 && (size_t)readlen < sz) {
@@ -286,10 +292,16 @@ int test_trycmd_run_subcommand(void) {
 }
 
 int test_trycmd_show_exit_status(void) {
-    char buffer[968] = { 0 };
+    char buffer[1280] = { 0 };
     char* argv_true[] = { "true", NULL };
-    struct trycmd_opts opts = { 0 };
-    opts.opt_sub_argv = argv_true;
+    struct trycmd_opts opts_color = {
+        .opt_color = trycmd_color_always
+    };
+    struct trycmd_opts opts_bw = {
+        .opt_color = trycmd_color_never
+    };
+    opts_color.opt_sub_argv = argv_true;
+    opts_bw.opt_sub_argv = argv_true;
     FILE* fout;
     long fpos;
 
@@ -297,7 +309,39 @@ int test_trycmd_show_exit_status(void) {
     fout = fmemopen(buffer, sizeof(buffer), "w");
 
     fpos = ftell(fout);
-    TEST_EQUAL_I(trycmd_show_exit_status(&opts, 0, fout), 0);
+    TEST_EQUAL_I(trycmd_show_exit_status(&opts_bw, 0, fout), 0);
+    fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos],
+        "==============================================================================\n"
+        "Success: true\n"
+        "==============================================================================\n");
+
+    fpos = ftell(fout);
+    TEST_EQUAL_I(trycmd_show_exit_status(&opts_bw, 1, fout), 1);
+    fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos],
+        "==============================================================================\n"
+        "Failed (status=1): true\n"
+        "==============================================================================\n");
+
+    fpos = ftell(fout);
+    TEST_EQUAL_I(trycmd_show_exit_status(&opts_bw, 2, fout), 2);
+    fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos],
+        "==============================================================================\n"
+        "Failed (status=2): true\n"
+        "==============================================================================\n");
+
+    fpos = ftell(fout);
+    TEST_EQUAL_I(trycmd_show_exit_status(&opts_bw, 255, fout), 255);
+    fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos],
+        "==============================================================================\n"
+        "Failed (status=255): true\n"
+        "==============================================================================\n");
+
+    fpos = ftell(fout);
+    TEST_EQUAL_I(trycmd_show_exit_status(&opts_color, 0, fout), 0);
     fflush(fout);
     TEST_EQUAL_S(&buffer[fpos],
         "\033[1;32m==============================================================================\n"
@@ -305,132 +349,20 @@ int test_trycmd_show_exit_status(void) {
         "\033[1;32m==============================================================================\033[0m\n");
 
     fpos = ftell(fout);
-    TEST_EQUAL_I(trycmd_show_exit_status(&opts, 1, fout), 1);
+    TEST_EQUAL_I(trycmd_show_exit_status(&opts_color, 1, fout), 1);
     fflush(fout);
     TEST_EQUAL_S(&buffer[fpos],
         "\033[1;31m==============================================================================\n"
         "Failed (status=1):\033[0m true\n"
         "\033[1;31m==============================================================================\033[0m\n");
 
-    fpos = ftell(fout);
-    TEST_EQUAL_I(trycmd_show_exit_status(&opts, 2, fout), 2);
-    fflush(fout);
-    TEST_EQUAL_S(&buffer[fpos],
-        "\033[1;31m==============================================================================\n"
-        "Failed (status=2):\033[0m true\n"
-        "\033[1;31m==============================================================================\033[0m\n");
-
-    fpos = ftell(fout);
-    TEST_EQUAL_I(trycmd_show_exit_status(&opts, 255, fout), 255);
-    fflush(fout);
-    TEST_EQUAL_S(&buffer[fpos],
-        "\033[1;31m==============================================================================\n"
-        "Failed (status=255):\033[0m true\n"
-        "\033[1;31m==============================================================================\033[0m\n");
-
     /* Clean up (skipped on test failure). */
     fclose(fout);
-    return 0;
-}
-
-int test_trycmd_needs_quoting(void) {
-    TEST_EQUAL_I(trycmd_needs_quoting('0'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting('1'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting('8'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting('9'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting('a'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting('b'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting('y'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting('z'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting('A'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting('B'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting('Y'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting('Z'), 0);
-
-    TEST_EQUAL_I(trycmd_needs_quoting('\0'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting(' '), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('!'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('"'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('#'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('$'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('%'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('&'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('\''), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('('), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting(')'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('*'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('+'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting(','), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('-'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting('.'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('/'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting(':'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting(';'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('<'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('='), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('>'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('?'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('@'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('['), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('\\'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting(']'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('^'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('_'), 0);
-    TEST_EQUAL_I(trycmd_needs_quoting('`'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('{'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('|'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('}'), 1);
-    TEST_EQUAL_I(trycmd_needs_quoting('~'), 1);
-    return 0;
-}
-
-int test_trycmd_pretty_print_arg(void) {
-    char buffer[42] = { 0 };
-    FILE* fout;
-    long fpos;
-
-    /* Write arguments to a memory stream then check its content. */
-    fout = fmemopen(buffer, sizeof(buffer), "w");
-    fpos = ftell(fout), trycmd_pretty_print_arg("", fout), fflush(fout);
-    TEST_EQUAL_S(&buffer[fpos], "");
-    fpos = ftell(fout), trycmd_pretty_print_arg("a", fout), fflush(fout);
-    TEST_EQUAL_S(&buffer[fpos], "a");
-    fpos = ftell(fout), trycmd_pretty_print_arg("abc", fout), fflush(fout);
-    TEST_EQUAL_S(&buffer[fpos], "abc");
-    fpos = ftell(fout), trycmd_pretty_print_arg("/a/b/c", fout), fflush(fout);
-    TEST_EQUAL_S(&buffer[fpos], "/a/b/c");
-    fpos = ftell(fout), trycmd_pretty_print_arg("a b c", fout), fflush(fout);
-    TEST_EQUAL_S(&buffer[fpos], "'a b c'");
-    fpos = ftell(fout), trycmd_pretty_print_arg("a\"b\"c", fout), fflush(fout);
-    TEST_EQUAL_S(&buffer[fpos], "'a\"b\"c'");
-    fpos = ftell(fout), trycmd_pretty_print_arg("a'b'c", fout), fflush(fout);
-    TEST_EQUAL_S(&buffer[fpos], "'a'\\''b'\\''c'");
-    fpos = ftell(fout), trycmd_pretty_print_arg("a", fout), fflush(fout);
-    TEST_EQUAL_S(&buffer[fpos], "a");
-    fpos = ftell(fout), trycmd_pretty_print_arg("*", fout), fflush(fout);
-    TEST_EQUAL_S(&buffer[fpos], "'*'");
-
-    /* Clean up (skipped on test failure). */
-    fclose(fout);
-    return 0;
-}
-
-int test_trycmd_print_argv(void) {
-    char* argv[] = { "this", "is a", "test", "*", "/bin/false", NULL };
-    char buffer[42] = { 0 };
-    FILE* fout;
-
-    /* Write arguments to a memory stream then check its content. */
-    fout = fmemopen(buffer, sizeof(buffer), "w");
-    trycmd_print_argv("prefix:", argv, fout);
-    fclose(fout);
-
-    TEST_EQUAL_S(buffer, "prefix: this 'is a' test '*' /bin/false");
     return 0;
 }
 
 int test_trycmd_print_usage(void) {
-    char buffer[768] = { 0 };
+    char buffer[968] = { 0 };
     FILE* fout;
 
     /* Write usage information to a memory stream then check its content. */
@@ -439,16 +371,24 @@ int test_trycmd_print_usage(void) {
     fclose(fout);
 
     TEST_EQUAL_S(buffer,
-        "Usage: try [-ivh] [--] [COMMAND] [ARG_1] ... [ARG_N]\n"
-        "Where:       -i --interactive      Execute the command in an interactive subshell.\n"
-        "             -v --verbose          Verbose output (echos the command being run).\n"
-        "             -h --help             Show this message.\n"
-        "             --                    End of options.\n"
-        "             COMMAND               The command to run.\n"
-        "             ARG_[1..N]            Arguments to the command.\n"
+        "Usage: try [OPTION]... COMMAND [ARG]...\n"
+        "Run COMMAND to completion then show its result in a standard and clear form.\n"
+        "Example: try -i wget www.ietf.org/rfc/rfc2324.txt  # Download an RFC.\n"
         "\n"
-        "Environment: TRY_INTERACTIVE=1     Always execute commands in an interactive subshell.\n"
-        "             SHELL=/bin/sh         The shell to use when executing the command.\n"
+        "Options:\n"
+        "  -i, --interactive  Execute the command in an interactive subshell.\n"
+        "  --color[=WHEN],    Color the result according to command's exit status.\n"
+        "  --colour[=WHEN]    WHEN is 'always' (default if omitted), 'never', or 'auto'.\n"
+        "  -v, --verbose      Verbose output (echos the command being run).\n"
+        "  -h, --help         Show this message.\n"
+        "  --                 End of options.\n"
+        "  COMMAND            The command to run.\n"
+        "  ARG                Arguments to the command.\n"
+        "\n"
+        "Environment:\n"
+        "  TRY_INTERACTIVE=1  Always execute commands in an interactive subshell.\n"
+        "  TRY_COLOR=WHEN     Add color to the result (see '--color').\n"
+        "  SHELL=/bin/sh      The shell to use when executing the command.\n"
         "\n");
     return 0;
 }
@@ -462,19 +402,24 @@ int test_trycmd_read_options(void) {
     char* test_argv_verbose_long[]      = { "try", "--verbose", NULL };
     char* test_argv_help_short[]        = { "try", "-h", NULL };
     char* test_argv_help_long[]         = { "try", "--help", NULL };
+    char* test_argv_color_default[]     = { "try", "--color", NULL };
+    char* test_argv_color_never[]       = { "try", "--color=never", NULL };
+    char* test_argv_color_always[]      = { "try", "--color=always", NULL };
+    char* test_argv_color_auto[]        = { "try", "--color=auto", NULL };
+    char* test_argv_colour_always[]     = { "try", "--colour=always", NULL };
+    char* test_argv_color_invalid[]     = { "try", "--color=XX_BAD_WHEN_XX", NULL };
     char* test_argv_compound[]          = { "try", "-ivh", NULL };
     char* test_argv_cmd_single[]        = { "try", "test_name", NULL };
     char* test_argv_cmd_double[]        = { "try", "test_name", "test_arg_1", NULL };
     char* test_argv_cmd_triple[]        = { "try", "test_name", "test_arg_1", "test_arg_2", NULL };
     char* test_argv_end_of_args[]       = { "try", "--", "-v", "test_arg_1", NULL };
-    char* test_argv_cmd_all[]           = { "try", "-i", "-v", "--help", "--",
-                                            "test_name", "test_arg_1", "test_arg_2",
-                                            NULL
-    };
+    char* test_argv_cmd_all[]           = { "try", "-i", "-v", "--color=auto", "--help", "--",
+                                            "test_name", "test_arg_1", "test_arg_2", NULL };
 
     /* Empty command, equivalent to "$ try". */
     TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_empty), test_argv_empty, &opts), 0);
     TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
     TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
     TEST_EQUAL_I(opts.opt_verbose, 0);
     TEST_EQUAL_I(opts.opt_help, 0);
@@ -484,6 +429,7 @@ int test_trycmd_read_options(void) {
     /* Interactive command, equivalent to "$ try -i" or "$ try --interactive". */
     TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_interactive_short), test_argv_interactive_short, &opts), 0);
     TEST_EQUAL_I(opts.opt_interactive, 1);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
     TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
     TEST_EQUAL_I(opts.opt_verbose, 0);
     TEST_EQUAL_I(opts.opt_help, 0);
@@ -491,6 +437,7 @@ int test_trycmd_read_options(void) {
     TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
     TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_interactive_long), test_argv_interactive_long, &opts), 0);
     TEST_EQUAL_I(opts.opt_interactive, 1);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
     TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
     TEST_EQUAL_I(opts.opt_verbose, 0);
     TEST_EQUAL_I(opts.opt_help, 0);
@@ -500,6 +447,7 @@ int test_trycmd_read_options(void) {
     /* Verbose command, equivalent to "$ try -v" or "$ try --verbose". */
     TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_verbose_short), test_argv_verbose_short, &opts), 0);
     TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
     TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
     TEST_EQUAL_I(opts.opt_verbose, 1);
     TEST_EQUAL_I(opts.opt_help, 0);
@@ -507,6 +455,7 @@ int test_trycmd_read_options(void) {
     TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
     TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_verbose_long), test_argv_verbose_long, &opts), 0);
     TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
     TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
     TEST_EQUAL_I(opts.opt_verbose, 1);
     TEST_EQUAL_I(opts.opt_help, 0);
@@ -516,6 +465,7 @@ int test_trycmd_read_options(void) {
     /* Help command, equivalent to "$ try -h" or "$ try --help". */
     TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_help_short), test_argv_help_short, &opts), 0);
     TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
     TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
     TEST_EQUAL_I(opts.opt_verbose, 0);
     TEST_EQUAL_I(opts.opt_help, 1);
@@ -523,15 +473,70 @@ int test_trycmd_read_options(void) {
     TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
     TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_help_long), test_argv_help_long, &opts), 0);
     TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
     TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
     TEST_EQUAL_I(opts.opt_verbose, 0);
     TEST_EQUAL_I(opts.opt_help, 1);
     TEST_EQUAL_I(opts.opt_sub_argc, 0);
     TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
 
+    /* Command with color, equivalent to "try --color". */
+    TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_color_default), test_argv_color_default, &opts), 0);
+    TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_always);
+    TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
+    TEST_EQUAL_I(opts.opt_verbose, 0);
+    TEST_EQUAL_I(opts.opt_help, 0);
+    TEST_EQUAL_I(opts.opt_sub_argc, 0);
+    TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
+
+    /* Command with color, equivalent to "try --color=never". */
+    TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_color_never), test_argv_color_never, &opts), 0);
+    TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
+    TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
+    TEST_EQUAL_I(opts.opt_verbose, 0);
+    TEST_EQUAL_I(opts.opt_help, 0);
+    TEST_EQUAL_I(opts.opt_sub_argc, 0);
+    TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
+
+    /* Command with color, equivalent to "try --color=always". */
+    TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_color_always), test_argv_color_always, &opts), 0);
+    TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_always);
+    TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
+    TEST_EQUAL_I(opts.opt_verbose, 0);
+    TEST_EQUAL_I(opts.opt_help, 0);
+    TEST_EQUAL_I(opts.opt_sub_argc, 0);
+    TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
+
+    /* Command with color, equivalent to "try --color=auto". */
+    TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_color_auto), test_argv_color_auto, &opts), 0);
+    TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_auto);
+    TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
+    TEST_EQUAL_I(opts.opt_verbose, 0);
+    TEST_EQUAL_I(opts.opt_help, 0);
+    TEST_EQUAL_I(opts.opt_sub_argc, 0);
+    TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
+
+    /* Command with color, equivalent to "try --colour=always". */
+    TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_colour_always), test_argv_colour_always, &opts), 0);
+    TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_always);
+    TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
+    TEST_EQUAL_I(opts.opt_verbose, 0);
+    TEST_EQUAL_I(opts.opt_help, 0);
+    TEST_EQUAL_I(opts.opt_sub_argc, 0);
+    TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
+
+    /* Command with an invalid color request. */
+    TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_color_invalid), test_argv_color_invalid, &opts), -1);
+
     /* Compound command, equivalent to "$ try -ivh". */
     TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_compound), test_argv_compound, &opts), 0);
     TEST_EQUAL_I(opts.opt_interactive, 1);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
     TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
     TEST_EQUAL_I(opts.opt_verbose, 1);
     TEST_EQUAL_I(opts.opt_help, 1);
@@ -541,6 +546,7 @@ int test_trycmd_read_options(void) {
     /* Single argument command, equivalent to "$ try test_name". */
     TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_cmd_single), test_argv_cmd_single, &opts), 0);
     TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
     TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
     TEST_EQUAL_I(opts.opt_verbose, 0);
     TEST_EQUAL_I(opts.opt_help, 0);
@@ -551,6 +557,7 @@ int test_trycmd_read_options(void) {
     /* Double argument command, equivalent to "$ try test_name test_arg_1". */
     TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_cmd_double), test_argv_cmd_double, &opts), 0);
     TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
     TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
     TEST_EQUAL_I(opts.opt_verbose, 0);
     TEST_EQUAL_I(opts.opt_help, 0);
@@ -562,6 +569,7 @@ int test_trycmd_read_options(void) {
     /* Triple argument command, equivalent to "$ try test_name test_arg_1 test_arg_2". */
     TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_cmd_triple), test_argv_cmd_triple, &opts), 0);
     TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
     TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
     TEST_EQUAL_I(opts.opt_verbose, 0);
     TEST_EQUAL_I(opts.opt_help, 0);
@@ -574,6 +582,7 @@ int test_trycmd_read_options(void) {
     /* Premature end-of-arguments command, equivalent to "$ try -- -v test_arg_1". */
     TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_end_of_args), test_argv_end_of_args, &opts), 0);
     TEST_EQUAL_I(opts.opt_interactive, 0);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
     TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
     TEST_EQUAL_I(opts.opt_verbose, 0);
     TEST_EQUAL_I(opts.opt_help, 0);
@@ -582,22 +591,24 @@ int test_trycmd_read_options(void) {
     TEST_EQUAL_S(opts.opt_sub_argv[1], test_argv_end_of_args[3]);
     TEST_EQUAL_S(opts.opt_sub_argv[2], NULL);
 
-    /* All argument command, equivalent to "$ try -i -v --help -- test_name test_arg_1 test_arg_2" */
+    /* All argument command, equivalent to "$ try -i -v --color=auto --help -- test_name test_arg_1 test_arg_2" */
     TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_cmd_all), test_argv_cmd_all, &opts), 0);
     TEST_EQUAL_I(opts.opt_interactive, 1);
+    TEST_EQUAL_I(opts.opt_color, trycmd_color_auto);
     TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
     TEST_EQUAL_I(opts.opt_verbose, 1);
     TEST_EQUAL_I(opts.opt_help, 1);
     TEST_EQUAL_I(opts.opt_sub_argc, 3);
-    TEST_EQUAL_S(opts.opt_sub_argv[0], test_argv_cmd_all[5]);
-    TEST_EQUAL_S(opts.opt_sub_argv[1], test_argv_cmd_all[6]);
-    TEST_EQUAL_S(opts.opt_sub_argv[2], test_argv_cmd_all[7]);
+    TEST_EQUAL_S(opts.opt_sub_argv[0], test_argv_cmd_all[6]);
+    TEST_EQUAL_S(opts.opt_sub_argv[1], test_argv_cmd_all[7]);
+    TEST_EQUAL_S(opts.opt_sub_argv[2], test_argv_cmd_all[8]);
     TEST_EQUAL_S(opts.opt_sub_argv[3], NULL);
 
     /* Interactive command controlled by environment string TRY_INTERACTIVE=[01]. */
     setenv("TRY_INTERACTIVE", "1", 0);
         TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_empty), test_argv_empty, &opts), 0);
         TEST_EQUAL_I(opts.opt_interactive, 1);
+        TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
         TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
         TEST_EQUAL_I(opts.opt_verbose, 0);
         TEST_EQUAL_I(opts.opt_help, 0);
@@ -606,6 +617,7 @@ int test_trycmd_read_options(void) {
     setenv("TRY_INTERACTIVE", "0", 1);
         TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_interactive_long), test_argv_interactive_long, &opts), 0);
         TEST_EQUAL_I(opts.opt_interactive, 1);
+        TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
         TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
         TEST_EQUAL_I(opts.opt_verbose, 0);
         TEST_EQUAL_I(opts.opt_help, 0);
@@ -613,10 +625,50 @@ int test_trycmd_read_options(void) {
         TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
     unsetenv("TRY_INTERACTIVE");
 
+    /* Command with color, controlled by environment string TRY_COLOR=[never|always|auto]. */
+    setenv("TRY_COLOR", "never", 0);
+        TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_empty), test_argv_empty, &opts), 0);
+        TEST_EQUAL_I(opts.opt_interactive, 0);
+        TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
+        TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
+        TEST_EQUAL_I(opts.opt_verbose, 0);
+        TEST_EQUAL_I(opts.opt_help, 0);
+        TEST_EQUAL_I(opts.opt_sub_argc, 0);
+        TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
+    setenv("TRY_COLOR", "always", 1);
+        TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_empty), test_argv_empty, &opts), 0);
+        TEST_EQUAL_I(opts.opt_interactive, 0);
+        TEST_EQUAL_I(opts.opt_color, trycmd_color_always);
+        TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
+        TEST_EQUAL_I(opts.opt_verbose, 0);
+        TEST_EQUAL_I(opts.opt_help, 0);
+        TEST_EQUAL_I(opts.opt_sub_argc, 0);
+        TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
+    setenv("TRY_COLOR", "auto", 1);
+        TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_empty), test_argv_empty, &opts), 0);
+        TEST_EQUAL_I(opts.opt_interactive, 0);
+        TEST_EQUAL_I(opts.opt_color, trycmd_color_auto);
+        TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
+        TEST_EQUAL_I(opts.opt_verbose, 0);
+        TEST_EQUAL_I(opts.opt_help, 0);
+        TEST_EQUAL_I(opts.opt_sub_argc, 0);
+        TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
+    setenv("TRY_COLOR", "XX_BAD_WHEN_XX", 1);
+        TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_empty), test_argv_empty, &opts), 0);
+        TEST_EQUAL_I(opts.opt_interactive, 0);
+        TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
+        TEST_EQUAL_S(opts.opt_shell, DEF_SHELL_PATH);
+        TEST_EQUAL_I(opts.opt_verbose, 0);
+        TEST_EQUAL_I(opts.opt_help, 0);
+        TEST_EQUAL_I(opts.opt_sub_argc, 0);
+        TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
+    unsetenv("TRY_COLOR");
+
     /* Sub-shell controlled controlled by environment string SHELL. */
     setenv("SHELL", "/bin/dummy_shell", 0);
         TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_empty), test_argv_empty, &opts), 0);
         TEST_EQUAL_I(opts.opt_interactive, 0);
+        TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
         TEST_EQUAL_S(opts.opt_shell, "/bin/dummy_shell");
         TEST_EQUAL_I(opts.opt_verbose, 0);
         TEST_EQUAL_I(opts.opt_help, 0);
@@ -629,6 +681,7 @@ int test_trycmd_read_options(void) {
     setenv("SHELL", "/bin/dummy_shell", 0);
         TEST_EQUAL_I(trycmd_read_options(ARGV_LEN(test_argv_empty), test_argv_empty, &opts), 0);
         TEST_EQUAL_I(opts.opt_interactive, 1);
+        TEST_EQUAL_I(opts.opt_color, trycmd_color_never);
         TEST_EQUAL_S(opts.opt_shell, "/bin/dummy_shell");
         TEST_EQUAL_I(opts.opt_verbose, 0);
         TEST_EQUAL_I(opts.opt_help, 0);
@@ -636,6 +689,25 @@ int test_trycmd_read_options(void) {
         TEST_EQUAL_S(opts.opt_sub_argv[0], NULL);
     unsetenv("TRY_INTERACTIVE");
     unsetenv("SHELL");
+    return 0;
+}
+
+int test_trycmd_parse_when(void) {
+    enum trycmd_color tc = trycmd_color_never;
+    TEST_EQUAL_I((trycmd_parse_when(NULL, &tc)), 0);
+    TEST_EQUAL_I((trycmd_parse_when("", &tc)), -1);
+    TEST_EQUAL_I((trycmd_parse_when("never", &tc)), 0);
+    TEST_EQUAL_I((trycmd_parse_when("always", &tc)), 0);
+    TEST_EQUAL_I((trycmd_parse_when("auto", &tc)), 0);
+    TEST_EQUAL_I((trycmd_parse_when(" auto", &tc)), -1);
+    TEST_EQUAL_I((trycmd_parse_when("auto ", &tc)), -1);
+    TEST_EQUAL_I((trycmd_parse_when(" auto ", &tc)), -1);
+    TEST_EQUAL_I((trycmd_parse_when("Auto", &tc)), -1);
+    TEST_EQUAL_I((trycmd_parse_when(NULL, &tc), tc), trycmd_color_always);
+    TEST_EQUAL_I((trycmd_parse_when("never", &tc), tc), trycmd_color_never);
+    TEST_EQUAL_I((trycmd_parse_when("always", &tc), tc), trycmd_color_always);
+    TEST_EQUAL_I((trycmd_parse_when("auto", &tc), tc), trycmd_color_auto);
+    TEST_EQUAL_I((tc = (enum trycmd_color)-1, trycmd_parse_when("XX_BAD_WHEN_XX", &tc), tc), -1);
     return 0;
 }
 
@@ -699,9 +771,11 @@ int test_trycmd_align_ptr(void) {
 int test_trycmd_getenv_s(void) {
     setenv("TESTKEY_1", "testval_1", 0);
     setenv("TESTKEY_2", "testval_2", 0);
-        TEST_EQUAL_S(trycmd_getenv_s("TESTKEY_1"), "testval_1");
-        TEST_EQUAL_S(trycmd_getenv_s("TESTKEY_2"), "testval_2");
-        TEST_EQUAL_S(trycmd_getenv_s("XX_BAD_KEY_XX"), NULL);
+        TEST_EQUAL_S(trycmd_getenv_s("TESTKEY_1", NULL), "testval_1");
+        TEST_EQUAL_S(trycmd_getenv_s("TESTKEY_2", NULL), "testval_2");
+        TEST_EQUAL_S(trycmd_getenv_s("TESTKEY_2", "XX_DEFAULT_VAL_XX"), "testval_2");
+        TEST_EQUAL_S(trycmd_getenv_s("XX_BAD_KEY_XX", NULL), NULL);
+        TEST_EQUAL_S(trycmd_getenv_s("XX_BAD_KEY_XX", "XX_DEFAULT_VAL_XX"), "XX_DEFAULT_VAL_XX");
     unsetenv("TESTKEY_1");
     unsetenv("TESTKEY_2");
     return 0;
@@ -710,11 +784,131 @@ int test_trycmd_getenv_s(void) {
 int test_trycmd_getenv_i(void) {
     setenv("TESTKEY_1", "99", 0);
     setenv("TESTKEY_2", "100", 0);
-        TEST_EQUAL_I(trycmd_getenv_i("TESTKEY_1"), 99);
-        TEST_EQUAL_I(trycmd_getenv_i("TESTKEY_2"), 100);
-        TEST_EQUAL_I(trycmd_getenv_i("XX_BAD_KEY_XX"), 0);
+        TEST_EQUAL_I(trycmd_getenv_i("TESTKEY_1", 0), 99);
+        TEST_EQUAL_I(trycmd_getenv_i("TESTKEY_2", 0), 100);
+        TEST_EQUAL_I(trycmd_getenv_i("TESTKEY_2", 123), 100);
+        TEST_EQUAL_I(trycmd_getenv_i("XX_BAD_KEY_XX", 0), 0);
+        TEST_EQUAL_I(trycmd_getenv_i("XX_BAD_KEY_XX", 123), 123);
     unsetenv("TESTKEY_1");
     unsetenv("TESTKEY_2");
+    return 0;
+}
+
+int test_trycmd_is_color_enabled(void) {
+    char buffer[1] = { 0 };
+    FILE* fout;
+
+    /* Create a memory stream for testing but we do not write to it. */
+    fout = fmemopen(buffer, sizeof(buffer), "w");
+
+    TEST_EQUAL_I(trycmd_is_color_enabled(trycmd_color_never, fout), 0);
+    TEST_EQUAL_I(trycmd_is_color_enabled(trycmd_color_always, fout), 1);
+    TEST_EQUAL_I(trycmd_is_color_enabled(trycmd_color_auto, fout), 0);
+    TEST_EQUAL_I(trycmd_is_color_enabled(trycmd_color_never, stdout), 0);
+    TEST_EQUAL_I(trycmd_is_color_enabled(trycmd_color_always, stdout), 1);
+    TEST_EQUAL_I(trycmd_is_color_enabled(trycmd_color_auto, stdout), isatty(STDOUT_FILENO));
+    TEST_EQUAL_I(trycmd_is_color_enabled(trycmd_color_never, stderr), 0);
+    TEST_EQUAL_I(trycmd_is_color_enabled(trycmd_color_always, stderr), 1);
+    TEST_EQUAL_I(trycmd_is_color_enabled(trycmd_color_auto, stderr), isatty(STDERR_FILENO));
+
+    /* Clean up (skipped on test failure). */
+    fclose(fout);
+    return 0;
+}
+
+int test_trycmd_needs_quoting(void) {
+    TEST_EQUAL_I(trycmd_needs_quoting('0'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('1'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('8'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('9'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('a'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('b'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('y'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('z'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('A'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('B'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('Y'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('Z'), 0);
+
+    TEST_EQUAL_I(trycmd_needs_quoting('\0'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting(' '), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('!'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('"'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('#'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('$'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('%'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('&'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('\''), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('('), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting(')'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('*'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('+'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting(','), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('-'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('.'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('/'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting(':'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting(';'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('<'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('='), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('>'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('?'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('@'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('['), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('\\'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting(']'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('^'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('_'), 0);
+    TEST_EQUAL_I(trycmd_needs_quoting('`'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('{'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('|'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('}'), 1);
+    TEST_EQUAL_I(trycmd_needs_quoting('~'), 1);
+    return 0;
+}
+
+int test_trycmd_pretty_print_arg(void) {
+    char buffer[42] = { 0 };
+    FILE* fout;
+    long fpos;
+
+    /* Write arguments to a memory stream then check its content. */
+    fout = fmemopen(buffer, sizeof(buffer), "w");
+    fpos = ftell(fout), trycmd_pretty_print_arg("", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "");
+    fpos = ftell(fout), trycmd_pretty_print_arg("a", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "a");
+    fpos = ftell(fout), trycmd_pretty_print_arg("abc", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "abc");
+    fpos = ftell(fout), trycmd_pretty_print_arg("/a/b/c", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "/a/b/c");
+    fpos = ftell(fout), trycmd_pretty_print_arg("a b c", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "'a b c'");
+    fpos = ftell(fout), trycmd_pretty_print_arg("a\"b\"c", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "'a\"b\"c'");
+    fpos = ftell(fout), trycmd_pretty_print_arg("a'b'c", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "'a'\\''b'\\''c'");
+    fpos = ftell(fout), trycmd_pretty_print_arg("a", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "a");
+    fpos = ftell(fout), trycmd_pretty_print_arg("*", fout), fflush(fout);
+    TEST_EQUAL_S(&buffer[fpos], "'*'");
+
+    /* Clean up (skipped on test failure). */
+    fclose(fout);
+    return 0;
+}
+
+int test_trycmd_print_argv(void) {
+    char* argv[] = { "this", "is a", "test", "*", "/bin/false", NULL };
+    char buffer[42] = { 0 };
+    FILE* fout;
+
+    /* Write arguments to a memory stream then check its content. */
+    fout = fmemopen(buffer, sizeof(buffer), "w");
+    trycmd_print_argv("prefix:", argv, fout);
+    fclose(fout);
+
+    TEST_EQUAL_S(buffer, "prefix: this 'is a' test '*' /bin/false\n");
     return 0;
 }
 
@@ -726,6 +920,8 @@ int test_trycmd_main(void) {
     char* argv_segflt[]       = { "try", trycmd_test_progname, "S", NULL };
     char* argv_exit_status[]  = { "try", trycmd_test_progname, "X", NULL };
     char* argv_non_existent[] = { "try", "XX_this_should_not_exist_XX", NULL };
+    char* argv_color_true[]   = { "try", "--color=always", "true", NULL };
+    char* argv_color_false[]  = { "try", "--color=always", "false", NULL };
     char buffer[256] = { 0 };
     int result;
 
@@ -736,10 +932,29 @@ int test_trycmd_main(void) {
     TEST_EQUAL_I(result, EXIT_SUCCESS);
     TEST_EQUAL_S(buffer,
         "hello this is a test\n"
+        "==============================================================================\n"
+        "Success: echo hello this is a test\n"
+        "==============================================================================\n");
+
+    trycmd_capture_begin();
+    result = trycmd_main(ARGV_LEN(argv_color_true), argv_color_true);
+    trycmd_capture_end(buffer, sizeof(buffer));
+    TEST_EQUAL_I(result, EXIT_SUCCESS);
+    TEST_EQUAL_S(buffer,
         "\033[1;32m==============================================================================\n"
-        "Success:\033[0m echo hello this is a test\n"
+        "Success:\033[0m true\n"
         "\033[1;32m==============================================================================\033[0m\n");
 
+    trycmd_capture_begin();
+    result = trycmd_main(ARGV_LEN(argv_color_false), argv_color_false);
+    trycmd_capture_end(buffer, sizeof(buffer));
+    TEST_EQUAL_I(result, EXIT_FAILURE);
+    TEST_EQUAL_S(buffer,
+        "\033[1;31m==============================================================================\n"
+        "Failed (status=1):\033[0m false\n"
+        "\033[1;31m==============================================================================\033[0m\n");
+
+    /* Test exit status. */
     TEST_EQUAL_I(trycmd_main(ARGV_LEN(argv_echo), argv_echo), EXIT_SUCCESS);
     TEST_EQUAL_I(trycmd_main(ARGV_LEN(argv_true), argv_true), EXIT_SUCCESS);
     TEST_EQUAL_I(trycmd_main(ARGV_LEN(argv_false), argv_false), EXIT_FAILURE);
@@ -756,7 +971,7 @@ int main(int argc, char* argv[]) {
     int result = EXIT_SUCCESS;
 
     /* Always initialise the test suite. */
-    trycmd_initialise_tests(argc, argv);
+    trycmd_initialize_tests(argc, argv);
 
     /* Check for a single-character mode argument. */
     if (argc == 2 && argv[1][0] != '\0' && argv[1][1] == '\0') {

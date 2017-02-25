@@ -42,6 +42,6 @@ AC_TYPE_SIZE_T
 
 # Checks for library functions. 
 AC_FUNC_FORK
-AC_CHECK_FUNCS([setlocale strchr strnlen fmemopen])
+AC_CHECK_FUNCS([dup dup2 getopt_long isatty fmemopen setlocale strchr strnlen])
 
 AC_OUTPUT

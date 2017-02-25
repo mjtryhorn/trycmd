@@ -11,10 +11,9 @@
 #include "trycmd_config.h"
 #include "trycmd.h"
 #include <assert.h>        /* assert. */
-#include <ctype.h>         /* isalnum. */
 #include <stddef.h>        /* size_t. */
-#include <stdio.h>         /* snprintf, fprintf, fputc, fputs, stderr. */
-#include <stdlib.h>        /* EXIT_SUCCESS, EXIT_FAILURE, abort. */
+#include <stdio.h>         /* snprintf, fprintf, fputs, stderr. */
+#include <stdlib.h>        /* EXIT_SUCCESS, abort. */
 #include <string.h>        /* strncpy, strnlen. */
 #include <sys/types.h>     /* pid_t. */
 #include <sys/wait.h>      /* waitpid. */
@@ -169,7 +168,6 @@ int trycmd_run_subcommand(const struct trycmd_opts* const opts) {
         /* Print the subcommand if requested. */
         if (opts->opt_verbose || trycmd_debug_enabled) {
             trycmd_print_argv("try:", argv, stderr);
-            fputc('\n', stderr);
         }
 
         /* Spawn the subprocess then wait for it to finish. */
@@ -217,111 +215,43 @@ int trycmd_show_exit_status(const struct trycmd_opts* const opts,
                             const int exit_status,
                             FILE* os) {
     /* Make a dividing line to separate the result from child messages. */
-    const char* const divider_line = _("=========================="
-                                       "=========================="
-                                       "==========================");
+    const char* const divider_line = N_("=========================="
+                                        "=========================="
+                                        "==========================");
+    const char* const color_green  = N_("\033[1;32m");
+    const char* const color_red    = N_("\033[1;31m");
+    const char* const color_none   = N_("\033[0m");
+    const char* color_off          = N_("");
+    const char* color_on           = N_("");
+
     /* Check arguments. */
     assert("Unexpected NULL opts" && (opts != NULL));
     assert("Unexpected NULL os" && (os != NULL));
 
+    /* Enable colored output on request. */
+    if (trycmd_is_color_enabled(opts->opt_color, os)) {
+        color_off = color_none;
+        color_on  = (exit_status == EXIT_SUCCESS)
+                  ? /* success  */ color_green
+                  : /* failiure */ color_red;
+    }
+
     /* Print a prologue. */
+    fprintf(os, N_("%s%s\n"), color_on, divider_line);
+
+    /* Print the status. */
     if (exit_status == EXIT_SUCCESS) {
-        fprintf(os, _("\033[1;32m%s\nSuccess:\033[0m"), divider_line);
+        fputs(_("Success:"), os);
     } else {
-        fprintf(os, _("\033[1;31m%s\nFailed (status=%d):\033[0m"),
-                divider_line, exit_status);
+        fprintf(os, _("Failed (status=%d):"), exit_status);
     }
 
     /* Print the command itself. */
-    trycmd_print_argv(N_(""), opts->opt_sub_argv, os);
+    trycmd_print_argv(color_off, opts->opt_sub_argv, os);
 
     /* Print an epilogue. */
-    if (exit_status == EXIT_SUCCESS) {
-        fprintf(os, _("\n\033[1;32m%s\033[0m\n"), divider_line);
-    } else {
-        fprintf(os, _("\n\033[1;31m%s\033[0m\n"), divider_line);
-    }
+    fprintf(os, N_("%s%s%s\n"), color_on, divider_line, color_off);
     return exit_status;
-}
-
-int trycmd_needs_quoting(const char c) {
-    switch (c) {
-        case '_':
-        case '-':
-        case '/':
-            // Special, allowed chars.
-            return 0;
-        default:
-            // Only needs quoting if outside range [0-9a-zA-Z].
-            return !isalnum(c);
-    }
-}
-
-void trycmd_pretty_print_arg(const char* const arg, FILE* const os) {
-    int needs_quoting = 0;
-    const char* apos;
-    const char* bpos;
-
-    /* Check arguments. */
-    assert("Unexpected NULL arg" && (arg != NULL));
-    assert("Unexpected NULL os" && (os != NULL));
-
-    /*
-     * Search for any non-alphanumeric characters
-     * that would necessitate quoting.
-     */
-    for (apos = arg; *apos && needs_quoting == 0; ++apos) {
-        needs_quoting = trycmd_needs_quoting(*apos);
-    }
-
-    if (!needs_quoting) {
-        /* This argument requires no quoting. */
-        fputs(arg, os);
-    } else {
-        /*
-         * This argument is not completely alpha-numeric.
-         * Print the argument within single quotes,
-         * escaping any internal quotes as found.
-         */
-        apos = arg;
-        bpos = strchr(apos, '\'');
-        while (bpos != NULL) {
-            /* Print everything before the quote. */
-            if (apos != bpos) {
-                fputc('\'', os);
-                fwrite(apos, sizeof(*apos), bpos - apos, os);
-                fputc('\'', os);
-            }
-
-            /* Now the quote itself, escaped. */
-            fprintf(os, "\\\'");
-
-            /* Search for the next quote. */
-            apos = bpos + 1;
-            bpos = strchr(apos, '\'');
-        }
-
-        /* If any argument text remains, print it within quotes. */
-        if (*apos) {
-            fprintf(os, "\'%s\'", apos);
-        }
-    }
-}
-
-void trycmd_print_argv(const char* const prefix, char* argv[], FILE* const os) {
-    /* Check arguments. */
-    assert("Unexpected NULL prefix" && (prefix != NULL));
-    assert("Unexpected NULL argv" && (argv != NULL));
-    assert("Unexpected NULL os" && (os != NULL));
-
-    /* Print the prefix. */
-    fputs(prefix, os);
-
-    /* Print any arguments. */
-    for (; *argv != NULL; ++argv) {
-        fputc(' ', os);
-        trycmd_pretty_print_arg(*argv, os);
-    }
 }
 
 /* EOF */

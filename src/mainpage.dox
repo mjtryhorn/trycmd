@@ -4,10 +4,10 @@
 A colorful message to inform you whether a command succeeded or failed.
 
 Try runs a given command then, on the completion of said command, prints a
-colorful message whether the command succeeded or failed. This may be useful
-when running commands that report their success or failure through status
-codes, where their on-screen notification (if any) is too subtle. Try is
-not subtle.
+clear message stating whether the command succeeded or failed. This may be
+useful when running commands that report their success or failure through
+exit status codes, where their on-screen notification (if any) is too subtle.
+Try is not subtle.
 
 <pre>$ try true
 ==============================================================================
@@ -18,5 +18,5 @@ Success: true
 Try relies upon the wrapped command returning zero for success and non-zero
 for failure. If failure is reported in another way, Try may mistake the
 command as having been successful. On the completion of the wrapped command
-Try's result message is written to standard output.
+Try's result message is written to standard error.
 */

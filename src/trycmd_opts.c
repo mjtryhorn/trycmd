@@ -12,6 +12,7 @@
 #include "trycmd.h"
 #include <assert.h>  /* assert. */
 #include <stddef.h>  /* size_t. */
+#include <string.h>  /* strcmp. */
 #include <stdio.h>   /* fprintf, fputs, fputc, fflush. */
 #include <getopt.h>  /* struct option. */
 #include <unistd.h>  /* getopt_long. */
@@ -23,31 +24,37 @@ void trycmd_print_usage(FILE* const os) {
         const char* value;
     };
     const struct option cmdopts[] = {
-        { N_("-i --interactive"), _("Execute the command in an interactive subshell.") },
-        { N_("-v --verbose"),     _("Verbose output (echos the command being run).")   },
-        { N_("-h --help"),        _("Show this message.")                              },
-        { N_("--"),               _("End of options.")                                 },
-        { N_("COMMAND"),          _("The command to run.")                             },
-        { N_("ARG_[1..N]"),       _("Arguments to the command.")                       }
+        { N_("-i, --interactive"), _("Execute the command in an interactive subshell.")            },
+        { N_("--color[=WHEN],"),   _("Color the result according to command's exit status.")       },
+        { N_("--colour[=WHEN]"),   _("WHEN is 'always' (default if omitted), 'never', or 'auto'.") },
+        { N_("-v, --verbose"),     _("Verbose output (echos the command being run).")              },
+        { N_("-h, --help"),        _("Show this message.")                                         },
+        { N_("--"),                _("End of options.")                                            },
+        { N_("COMMAND"),           _("The command to run.")                                        },
+        { N_("ARG"),               _("Arguments to the command.")                                  },
     };
     const struct option envopts[] = {
         { N_("TRY_INTERACTIVE=1"),     _("Always execute commands in an interactive subshell.") },
+        { N_("TRY_COLOR=WHEN"),        _("Add color to the result (see '--color').") },
         { N_("SHELL=" DEF_SHELL_PATH), _("The shell to use when executing the command.") },
     };
     size_t idx;
 
+    /* Print a standard header. */
+    fputs(_("Usage: try [OPTION]... COMMAND [ARG]...\n"
+            "Run COMMAND to completion then show its result in a standard and clear form.\n"
+            "Example: try -i wget www.ietf.org/rfc/rfc2324.txt  # Download an RFC.\n"), os);
+
     /* Print all command line options, first to last. */
-    fputs(_("Usage: try [-ivh] [--] [COMMAND] [ARG_1] ... [ARG_N]\n"), os);
-    fprintf(os, _("Where:       %-20s  %s\n"), cmdopts[0].key, cmdopts[0].value);
-    for (idx = 1; idx < sizeof(cmdopts) / sizeof(cmdopts[0]); ++idx) {
-        fprintf(os, _("             %-20s  %s\n"), cmdopts[idx].key, cmdopts[idx].value);
+    fputs(_("\nOptions:\n"), os);
+    for (idx = 0; idx < sizeof(cmdopts) / sizeof(cmdopts[0]); ++idx) {
+        fprintf(os, _("  %-17s  %s\n"), cmdopts[idx].key, cmdopts[idx].value);
     }
-    fputc('\n', os);
 
     /* Print all environment options. */
-    fprintf(os, _("Environment: %-20s  %s\n"), envopts[0].key, envopts[0].value);
-    for (idx = 1; idx < sizeof(envopts) / sizeof(envopts[0]); ++idx) {
-        fprintf(os, _("             %-20s  %s\n"), envopts[idx].key, envopts[idx].value);
+    fputs(_("\nEnvironment:\n"), os);
+    for (idx = 0; idx < sizeof(envopts) / sizeof(envopts[0]); ++idx) {
+        fprintf(os, _("  %-17s  %s\n"), envopts[idx].key, envopts[idx].value);
     }
     fputc('\n', os);
 
@@ -57,14 +64,18 @@ void trycmd_print_usage(FILE* const os) {
 
 int trycmd_read_options(const int argc, char* argv[],
                         struct trycmd_opts* const opts_out) {
-    const char shortopts[] = "+ivh";
+    const char* const shortopts = N_("+ivh");
     const struct option longopts[] = {
-        { N_("interactive"), 0, NULL, 'i' },
-        { N_("verbose"),     0, NULL, 'v' },
-        { N_("help"),        0, NULL, 'h' },
-        { NULL,              0, NULL, 0   }
+        { N_("interactive"), no_argument,       NULL, 'i' },
+        { N_("color"),       optional_argument, NULL, 'C' },
+        { N_("colour"),      optional_argument, NULL, 'C' },
+        { N_("verbose"),     no_argument,       NULL, 'v' },
+        { N_("help"),        no_argument,       NULL, 'h' },
+        { NULL,              0,                 NULL, 0   }
     };
     struct trycmd_opts opts_out_tmp = { 0 };
+    const char* opt_color_when;
+    extern char* optarg;
     extern int optind;
     int opt;
 
@@ -83,8 +94,22 @@ int trycmd_read_options(const int argc, char* argv[],
      * These are lower precedence than options
      * specified upon the command line directly.
      */
-    opts_out_tmp.opt_interactive = !!trycmd_getenv_i(N_("TRY_INTERACTIVE"));
-    opts_out_tmp.opt_shell       = trycmd_getenv_s(N_("SHELL"));
+    opts_out_tmp.opt_interactive = !!trycmd_getenv_i(N_("TRY_INTERACTIVE"), 0);
+    opts_out_tmp.opt_shell = trycmd_getenv_s(N_("SHELL"), DEF_SHELL_PATH);
+    opt_color_when = trycmd_getenv_s(N_("TRY_COLOR"), NULL);
+
+    /* Attempt to parse any TRY_COLOR=WHEN environment setting. */
+    if (opt_color_when != NULL) {
+        if (trycmd_parse_when(opt_color_when, &opts_out_tmp.opt_color) != 0) {
+            /*
+             * Parse failure. As this was requested via the environment,
+             * report it but continue (to avoid environment key conflicts).
+             */
+            trycmd_debug("trycmd_read_options: unrecognised"
+                         " TRY_COLOR value: \"%s\"\n",
+                         opt_color_when);
+        }
+    }
 
     /*
      * Read all standard "-X" and "--X" options.
@@ -96,13 +121,24 @@ int trycmd_read_options(const int argc, char* argv[],
             case 'i':  /* Interactive. */
                 opts_out_tmp.opt_interactive = 1;
                 break;
+            case 'C':  /* Color[=WHEN]. */
+                if (trycmd_parse_when(optarg, &opts_out_tmp.opt_color) != 0) {
+                    /*
+                     * Parse failure. As this was directly requested on
+                     * the command-line, report the error and fail fast.
+                     */
+                    trycmd_debug("trycmd_read_options: unrecognised"
+                                 " --color value: \"%s\"\n",
+                                 optarg);
+                    return -1;
+                }
+                break;
             case 'v':  /* Verbose. */
                 opts_out_tmp.opt_verbose = 1;
                 break;
             case 'h':  /* Help me! */
                 opts_out_tmp.opt_help = 1;
                 break;
-
             default:   /* Unexpected option. */
                 assert("Unexpected option" && 0);
             case '?':  /* Invalid option. */
@@ -114,14 +150,41 @@ int trycmd_read_options(const int argc, char* argv[],
     opts_out_tmp.opt_sub_argc = argc - optind;
     opts_out_tmp.opt_sub_argv = &argv[optind];
 
-    /* Apply any defaults. */
-    if (opts_out_tmp.opt_shell == NULL || opts_out_tmp.opt_shell[0] == '\0') {
-        opts_out_tmp.opt_shell = DEF_SHELL_PATH;
-    }
-
     /* Copy the result and return 0 for success. */
     *opts_out = opts_out_tmp;
     return 0;
+}
+
+int trycmd_parse_when(const char* const when, enum trycmd_color* const out) {
+    const struct when_opt {
+        const char* key;
+        enum trycmd_color value;
+    } whenopts[] = {
+        { N_("auto"),   trycmd_color_auto   },
+        { N_("always"), trycmd_color_always },
+        { N_("never"),  trycmd_color_never  },
+    };
+    size_t idx;
+
+    /* Check arguments. */
+    assert("Unexpected NULL out" && (out != NULL));
+
+    if (when == NULL) {
+        /* Coloured output requested but no WHEN specified. */
+        *out = trycmd_color_always;
+        return 0;
+    } else {
+        /* Convert the given WHEN string to an enumeration value. */
+        for (idx = 0; idx < sizeof(whenopts) / sizeof(whenopts[0]); ++idx) {
+            if (strcmp(when, whenopts[idx].key) == 0) {
+                *out = whenopts[idx].value;
+                return 0;
+            }
+        }
+    }
+
+    /* Unrecognised WHEN string. */
+    return -1;
 }
 
 /* EOF */
