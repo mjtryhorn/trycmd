@@ -8,12 +8,11 @@ This may be useful when running commands that report their success or failure
 through status codes, where their on-screen notification (if any) is too
 subtle. Trycmd is not subtle.
 
-Example: <code>
-$ try wget -q www.ietf.org/rfc/rfc2324.txt  # Download an RFC.
+Example:
+<pre>$ try wget -q www.ietf.org/rfc/rfc2324.txt  # Download an RFC.
 ==============================================================================
 Success: wget -q www.ietf.org/rfc/rfc2324.txt
-==============================================================================
-</code>
+==============================================================================</pre>
 
 To create automake build files, either use bootstrap:
 - <code>$ ./bootstrap.sh</code>
