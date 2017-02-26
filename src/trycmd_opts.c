@@ -42,8 +42,8 @@ void trycmd_print_usage(FILE* const os) {
 
     /* Print a standard header. */
     fputs(_("Usage: try [OPTION]... COMMAND [ARG]...\n"
-            "Run COMMAND to completion then show its result in a standard and clear form.\n"
-            "Example: try -i wget www.ietf.org/rfc/rfc2324.txt  # Download an RFC.\n"), os);
+            "Run COMMAND to completion then show its result in a clear and consistent form.\n"
+            "Example: try wget www.ietf.org/rfc/rfc2324.txt  # Download an RFC.\n"), os);
 
     /* Print all command line options, first to last. */
     fputs(_("\nOptions:\n"), os);

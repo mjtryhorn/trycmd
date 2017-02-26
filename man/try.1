@@ -1,5 +1,5 @@
 .\" 
-.\" trycmd.1
+.\" try.1
 .\"
 .\" This file is part of try.  (c) 2017 M. J. Tryhorn.
 .\"
@@ -8,9 +8,9 @@
 .ds Nm Try
 .ds nm try
 .ds Vn 1.0
-.TH \*(nm 6
+.TH \*(nm 1
 .SH NAME
-\*(nm \- a standard and clear message to inform you whether a command
+\*(nm \- a clear and consistent message to inform you whether a command
 succeeded or failed
 .SH SYNOPSIS
 .B \*(nm
@@ -21,9 +21,10 @@ succeeded or failed
 .SH DESCRIPTION
 .B \*(Nm
 runs a given command then, on the completion of said command, prints a clear
-message stating whether the command succeeded or failed. This may be useful
-when running commands that report their success or failure through exit
-status codes, where their on-screen notification (if any) is too subtle.
+and consistent message stating whether the command succeeded or failed. This
+may be useful when running commands that report their success or failure
+through exit status codes, where their on-screen notification (if any) is too
+subtle.
 .B \*(Nm
 is not subtle.
 .PP
@@ -77,5 +78,3 @@ colorful result.
 If there are any, please notify the author at the address below.
 .SH AUTHOR
 M. J. Tryhorn (bugs@example.com).
-.SH SEE ALSO
-.BR trycmd (1)

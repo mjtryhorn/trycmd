@@ -16,8 +16,6 @@ AM_PROG_AR
 AC_DEFINE([DEF_SHELL_PATH], ["/bin/sh"],
     [The absolute system path to the default shell.])
 
-# Checks for libraries.
-
 # Checks for header files.
 AC_CHECK_HEADERS([ \
     assert.h \

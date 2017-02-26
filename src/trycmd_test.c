@@ -372,8 +372,8 @@ int test_trycmd_print_usage(void) {
 
     TEST_EQUAL_S(buffer,
         "Usage: try [OPTION]... COMMAND [ARG]...\n"
-        "Run COMMAND to completion then show its result in a standard and clear form.\n"
-        "Example: try -i wget www.ietf.org/rfc/rfc2324.txt  # Download an RFC.\n"
+        "Run COMMAND to completion then show its result in a clear and consistent form.\n"
+        "Example: try wget www.ietf.org/rfc/rfc2324.txt  # Download an RFC.\n"
         "\n"
         "Options:\n"
         "  -i, --interactive  Execute the command in an interactive subshell.\n"
